@@ -3,11 +3,20 @@
 import { useState, ChangeEvent, FormEvent, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
+import { GoogleMap, LoadScript, Marker } from '@react-google-maps/api';
 
 // Max file size in bytes (3MB - very strict)
 const MAX_FILE_SIZE = 3 * 1024 * 1024;
 // Target size for compression (800KB - more aggressive)
 const TARGET_FILE_SIZE = 800 * 1024;
+
+// Add this constant for map styling
+const mapContainerStyle = {
+  width: '100%',
+  height: '300px',
+  borderRadius: '0.5rem',
+  marginTop: '0.5rem'
+};
 
 export default function SubmitObservation() {
   const router = useRouter();
@@ -28,6 +37,10 @@ export default function SubmitObservation() {
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   
+  // Add map state
+  const [mapCenter, setMapCenter] = useState({ lat: 33.6844, lng: 73.0479 }); // Islamabad by default
+  const [markerPosition, setMarkerPosition] = useState<{ lat: number; lng: number } | null>(null);
+
   const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -138,22 +151,33 @@ export default function SubmitObservation() {
     
     try {
       // Call the test-vision API with enhanced mode enabled
+      console.log('Calling species identification API...');
       const response = await fetch(`/api/test-vision?imageUrl=${encodeURIComponent(imageDataUrl)}&enhancedMode=true`);
       
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to identify species');
+        throw new Error(errorData.error || errorData.details || 'Failed to identify species');
       }
       
       const data = await response.json();
+      console.log('Species identification API response:', data);
       setIdentificationResult(data.result);
+      
+      // Check if this is a local fallback result
+      const isLocalFallback = data.isLocalFallback || 
+                             (data.result.rawResponse && 
+                              data.result.rawResponse.includes('from our local database'));
       
       // If we have suggestions, update the form fields
       if (data.result.suggestions && data.result.suggestions.length > 0) {
         const topSuggestion = data.result.suggestions[0];
         
-        // Only auto-fill if confidence is above threshold (70%)
-        if (topSuggestion.confidence > 0.7) {
+        // For local fallback, show special message
+        if (isLocalFallback) {
+          setError(`Online identification unavailable. Here are some common species that match your image - click to use.`);
+        } 
+        // Only auto-fill if confidence is above threshold (70%) and not from local fallback
+        else if (topSuggestion.confidence > 0.7 && !isLocalFallback) {
           // Update form data with the identified species
           setFormData(prev => ({
             ...prev,
@@ -167,12 +191,42 @@ export default function SubmitObservation() {
           // If confidence is low, show suggestions but don't auto-fill
           setError(`Possible species: ${topSuggestion.name} (${Math.round(topSuggestion.confidence * 100)}% confidence) - click to use`);
         }
+      } else {
+        // No suggestions received
+        setError('Unable to identify species in this image. Please enter the details manually or try a different image.');
       }
     } catch (err) {
       console.error('Error identifying species:', err);
-      setError('Could not identify species from image');
+      
+      // Fallback to local processing if there's a critical API error
+      tryLocalFallbackProcessing(imageDataUrl);
     } finally {
       setIsIdentifying(false);
+    }
+  };
+  
+  // Local fallback processing when the API fails completely
+  const tryLocalFallbackProcessing = (imageDataUrl: string) => {
+    try {
+      // Set a default suggestion list based on common local species
+      const commonSpecies = [
+        { name: 'Rock Pigeon', scientific_name: 'Columba livia', confidence: 0.75 },
+        { name: 'Grey Francolin', scientific_name: 'Francolinus pondicerianus', confidence: 0.68 },
+        { name: 'House Sparrow', scientific_name: 'Passer domesticus', confidence: 0.65 },
+        { name: 'Chir Pine', scientific_name: 'Pinus roxburghii', confidence: 0.63 },
+        { name: 'Leopard', scientific_name: 'Panthera pardus', confidence: 0.60 }
+      ];
+      
+      setIdentificationResult({
+        suggestions: commonSpecies,
+        rawResponse: "This is a suggested match from our local database as the identification service was unavailable."
+      });
+      
+      // Show local fallback suggestions message
+      setError('Online identification unavailable. Here are some common species in this area - click to use.');
+    } catch (localError) {
+      console.error('Even local fallback failed:', localError);
+      setError('Species identification service is currently unavailable. Please enter the species information manually.');
     }
   };
   
@@ -185,6 +239,19 @@ export default function SubmitObservation() {
     }));
     
     setError(`Applied: ${suggestion.name} (${Math.round(suggestion.confidence * 100)}% confidence)`);
+  };
+  
+  // Add map click handler
+  const handleMapClick = (event: google.maps.MapMouseEvent) => {
+    if (event.latLng) {
+      const lat = event.latLng.lat();
+      const lng = event.latLng.lng();
+      setMarkerPosition({ lat, lng });
+      setFormData(prev => ({
+        ...prev,
+        location: `${lat.toFixed(6)}, ${lng.toFixed(6)} - Islamabad`
+      }));
+    }
   };
   
   const handleImageChange = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -499,6 +566,40 @@ export default function SubmitObservation() {
                   required
                   disabled={isSubmitting || isCompressing || isIdentifying}
                 />
+                <div className="mt-2 mb-2">
+                  <p className="text-sm text-gray-400">Click on the map to set the location:</p>
+                  <LoadScript googleMapsApiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""}>
+                    <GoogleMap
+                      mapContainerStyle={mapContainerStyle}
+                      center={mapCenter}
+                      zoom={11}
+                      onClick={handleMapClick}
+                      options={{
+                        styles: [
+                          {
+                            elementType: "geometry",
+                            stylers: [{ color: "#242f3e" }]
+                          },
+                          {
+                            elementType: "labels.text.stroke",
+                            stylers: [{ color: "#242f3e" }]
+                          },
+                          {
+                            elementType: "labels.text.fill",
+                            stylers: [{ color: "#746855" }]
+                          }
+                        ]
+                      }}
+                    >
+                      {markerPosition && <Marker position={markerPosition} />}
+                    </GoogleMap>
+                  </LoadScript>
+                  {markerPosition && (
+                    <p className="text-xs mt-1 text-gray-400">
+                      Selected: {markerPosition.lat.toFixed(6)}, {markerPosition.lng.toFixed(6)}
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
             
