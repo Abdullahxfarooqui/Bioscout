@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { db, useRealtimeDb } from './firebase';
+import { db, firestore, useRealtimeDb } from './firebase';
 import { 
   ref as rtdbRef, 
   set as rtdbSet, 
@@ -39,7 +39,7 @@ export async function addObservation(observationData: any) {
     await rtdbSet(newObservationRef, data);
     return { observation_id };
   } else {
-    const observationsRef = collection(db, 'observations');
+    const observationsRef = collection(firestore, 'observations');
     await addDoc(observationsRef, data);
     return { observation_id };
   }
@@ -69,7 +69,7 @@ export async function getObservations(limitCount = 20) {
     
     return observations;
   } else {
-    const observationsRef = collection(db, 'observations');
+    const observationsRef = collection(firestore, 'observations');
     const q = query(
       observationsRef,
       orderBy('created_at', 'desc'),

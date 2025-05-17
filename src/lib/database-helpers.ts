@@ -9,68 +9,123 @@ import {
   orderByChild,
   limitToLast
 } from 'firebase/database';
+import { 
+  ref as storageRef, 
+  uploadBytes, 
+  getDownloadURL 
+} from 'firebase/storage';
+import { storage } from './firebase';
 
 // Function to store an image directly in the database
-export async function storeImageInDatabase(buffer: Buffer): Promise<string> {
+// Bypassing Firebase Storage entirely due to persistent connection issues
+export async function storeImageInDatabase(
+  buffer: Buffer, 
+  fileName?: string, 
+  contentType: string = 'image/jpeg'
+): Promise<string> {
+  console.log('► Starting direct database image storage...');
+  
+  if (!buffer || buffer.length === 0) {
+    throw new Error('Invalid image data: Buffer is empty');
+  }
+  
+  // Check if image is too large for database
+  if (buffer.length > 500 * 1024) { // 500KB max for database storage
+    console.log('⚠️ Image is large for database storage, compressing...');
+    // No actual compression implemented here - would need client-side compression
+  }
+  
   try {
-    // Convert buffer to base64 string
-    const base64Image = `data:image/jpeg;base64,${buffer.toString('base64')}`;
-    const imageId = uuidv4();
-    const imageRef = dbRef(db, `images/${imageId}`);
+    // Convert to base64
+    const base64Data = buffer.toString('base64');
+    const dataUrl = `data:${contentType};base64,${base64Data}`;
     
-    // Store the image data in the database
-    await set(imageRef, {
+    // Generate ID and path
+    const timestamp = Date.now();
+    const safeName = fileName 
+      ? fileName.replace(/[^a-zA-Z0-9.]/g, '_')
+      : 'image.jpg';
+    const imageId = `img_${timestamp}_${uuidv4().substring(0, 6)}`;
+    const dbPath = `image_data/${imageId}`;
+    
+    console.log(`► Storing image directly in database: ${safeName} (${buffer.length} bytes)`);
+    
+    // Store in database
+    await set(dbRef(db, dbPath), {
       id: imageId,
-      data: base64Image,
-      timestamp: Date.now()
+      fileName: safeName,
+      contentType: contentType,
+      size: buffer.length,
+      created_at: timestamp,
+      data: dataUrl
     });
     
-    // Return a reference to the image
-    return `db-image:${imageId}`;
+    console.log(`► Image stored in database: ${imageId}`);
+    return `db://${dbPath}`;
+    
   } catch (error) {
-    console.error("Error storing image:", error);
-    throw error;
+    console.error('‼️ Database storage failed:', error);
+    throw new Error(`Database storage failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-// Function to get an image from the database
-export async function getImageFromDatabase(imageId: string): Promise<string | null> {
+// Get image from database
+export async function getImageFromDatabase(imageUrl: string): Promise<string> {
+  if (!imageUrl) return '';
+  
   try {
-    const imageRef = dbRef(db, `images/${imageId}`);
-    const snapshot = await get(imageRef);
-    
-    if (snapshot.exists()) {
-      return snapshot.val().data;
+    // Database stored image
+    if (imageUrl.startsWith('db://')) {
+      console.log('► Getting image from database');
+      const dbPath = imageUrl.replace('db://', '');
+      const snapshot = await get(dbRef(db, dbPath));
+      
+      if (snapshot.exists()) {
+        return snapshot.val().data;
+      }
+      throw new Error(`Image not found in database: ${dbPath}`);
     }
     
-    return null;
+    // Regular URL
+    return imageUrl;
+    
   } catch (error) {
-    console.error("Error fetching image:", error);
-    return null;
+    console.error('‼️ Error retrieving image:', error);
+    throw new Error(`Image retrieval failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-// Function to store an observation in the database
+// Store an observation
 export async function storeObservation(data: any): Promise<string> {
-  const id = uuidv4();
-  const observationRef = dbRef(db, `observations/${id}`);
+  console.log('► Storing observation data');
   
-  await set(observationRef, {
-    ...data,
-    observation_id: id,
-    created_at: Date.now()
-  });
-  
-  return id;
+  try {
+    const id = uuidv4();
+    const observationRef = dbRef(db, `observations/${id}`);
+    
+    await set(observationRef, {
+      ...data,
+      observation_id: id,
+      created_at: Date.now(),
+      status: 'active'
+    });
+    
+    console.log(`► Observation stored with ID: ${id}`);
+    return id;
+    
+  } catch (error) {
+    console.error('‼️ Error storing observation:', error);
+    throw new Error(`Failed to store observation: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
-// Function to get all observations
+// Get all observations
 export async function getAllObservations(limit = 20): Promise<any[]> {
   try {
-    const observationsRef = dbRef(db, 'observations');
     const observationsQuery = query(
-      observationsRef,
-      orderByChild('created_at')
+      dbRef(db, 'observations'),
+      orderByChild('created_at'),
+      limitToLast(limit)
     );
     
     const snapshot = await get(observationsQuery);
@@ -78,34 +133,26 @@ export async function getAllObservations(limit = 20): Promise<any[]> {
     
     if (snapshot.exists()) {
       const data = snapshot.val();
-      // Convert object to array and sort by created_at (descending)
       Object.keys(data).forEach(key => {
         observations.push(data[key]);
       });
-      observations.sort((a, b) => b.created_at - a.created_at);
+      observations.reverse(); 
     }
     
-    // Return limited number of observations
-    return observations.slice(0, limit);
+    return observations;
   } catch (error) {
     console.error("Error fetching observations:", error);
     return [];
   }
 }
 
-// Function to get a specific observation
+// Get a specific observation
 export async function getObservationById(id: string): Promise<any | null> {
   try {
-    const observationRef = dbRef(db, `observations/${id}`);
-    const snapshot = await get(observationRef);
-    
-    if (snapshot.exists()) {
-      return snapshot.val();
-    }
-    
-    return null;
+    const snapshot = await get(dbRef(db, `observations/${id}`));
+    return snapshot.exists() ? snapshot.val() : null;
   } catch (error) {
     console.error("Error fetching observation:", error);
     return null;
   }
-}
+} 

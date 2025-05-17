@@ -1,6 +1,62 @@
-# BioScout3 Project
+# BioScout
 
-This is a Next.js application integrated with Firebase.
+A platform for citizen scientists to document and identify flora and fauna.
+
+## Features
+
+- Submit observations with images
+- Automatic species identification using AI
+- View and search all observations
+- Real-time data updates
+
+## Species Identification
+
+BioScout uses the powerful iNaturalist classifier model from Hugging Face for accurate species identification:
+
+1. **INaturalist Classifier**: Identifies common and scientific names of plants and animals using a model trained on the extensive iNaturalist dataset
+2. **Custom Taxonomy Database**: Enhances results with a comprehensive mapping between scientific and common names
+3. **Wikipedia Integration**: For enhanced scientific name lookup on demand
+
+### Enhanced Mode
+
+The application supports an "enhanced mode" that provides more detailed species identification results, including:
+- Scientific names with higher accuracy
+- Higher confidence identifications
+- More informative descriptions
+- Wikipedia data integration for top matches
+- Automatic species name suggestion when uploading observations
+
+To test this feature:
+1. Visit `/hugging-face-demo` in your browser
+2. Enter an image URL or upload an image
+3. Toggle the "Use enhanced mode" option
+4. Click "Identify Species"
+
+## Environment Variables
+
+Create a `.env.local` file with the following variables:
+
+```
+# Firebase Configuration
+NEXT_PUBLIC_FIREBASE_API_KEY=your_firebase_api_key
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_firebase_auth_domain
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_firebase_project_id
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_firebase_storage_bucket
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_firebase_messaging_sender_id
+NEXT_PUBLIC_FIREBASE_APP_ID=your_firebase_app_id
+NEXT_PUBLIC_FIREBASE_DATABASE_URL=your_firebase_database_url
+
+# Hugging Face API Key (for species identification)
+HUGGINGFACE_API_KEY=your_huggingface_api_key
+```
+
+## Getting Started
+
+1. Clone the repository
+2. Install dependencies with `npm install`
+3. Create a `.env.local` file with your API keys
+4. Run the development server with `npm run dev`
+5. Open [http://localhost:3000](http://localhost:3000) in your browser
 
 ## Prerequisites
 

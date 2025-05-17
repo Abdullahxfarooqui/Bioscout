@@ -10,7 +10,9 @@ export interface Observation {
     suggestions: Array<{
       name: string;
       confidence: number;
+      scientific_name?: string;
     }>;
+    rawResponse?: string;
   };
   created_at?: any;
 }

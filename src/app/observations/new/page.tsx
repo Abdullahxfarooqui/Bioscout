@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { collection, addDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '@/lib/firebase';
+import { firestore, storage } from '@/lib/firebase';
 import { useDropzone } from 'react-dropzone';
 import { useForm } from 'react-hook-form';
 
@@ -64,7 +64,7 @@ export default function NewObservationPage() {
       }
       
       // Add document to Firestore
-      const docRef = await addDoc(collection(db, 'observations'), {
+      const docRef = await addDoc(collection(firestore, 'observations'), {
         ...data,
         image_url: imageUrl,
         created_at: new Date().toISOString(),

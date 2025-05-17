@@ -130,10 +130,10 @@ export default function ObservationCard({ observation, index = 0 }: ObservationC
         
         {observation.ai_identification ? (
           <p className="text-sm text-gray-400 mb-3">
-            AI Identification: {observation.ai_identification.suggestions.map((suggestion, index) => (
+            AI Identification: {observation.ai_identification?.suggestions?.map((suggestion, index, array) => (
               <span key={index}>
                 {suggestion.name} ({Math.round(suggestion.confidence * 100)}%)
-                {index < observation.ai_identification.suggestions.length - 1 ? ', ' : ''}
+                {index < array.length - 1 ? ', ' : ''}
               </span>
             ))}
           </p>

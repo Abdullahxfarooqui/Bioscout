@@ -1,8 +1,13 @@
 "use client";
 
-import { useState, ChangeEvent, FormEvent } from 'react';
+import { useState, ChangeEvent, FormEvent, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
+
+// Max file size in bytes (3MB - very strict)
+const MAX_FILE_SIZE = 3 * 1024 * 1024;
+// Target size for compression (800KB - more aggressive)
+const TARGET_FILE_SIZE = 800 * 1024;
 
 export default function SubmitObservation() {
   const router = useRouter();
@@ -16,15 +21,173 @@ export default function SubmitObservation() {
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [isIdentifying, setIsIdentifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [identificationResult, setIdentificationResult] = useState<any>(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   
   const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
   
-  const handleImageChange = (e: ChangeEvent<HTMLInputElement>) => {
+  // Compress image function
+  const compressImage = useCallback((file: File): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      setIsCompressing(true);
+      
+      // If file is already small enough, return it as is
+      if (file.size <= TARGET_FILE_SIZE) {
+        setIsCompressing(false);
+        return resolve(file);
+      }
+      
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        
+        img.onload = () => {
+          // Calculate compression ratio based on file size
+          let quality = 0.6; // Default quality - more aggressive
+          
+          // More aggressive compression for larger files
+          if (file.size > MAX_FILE_SIZE * 2) {
+            quality = 0.3;
+          } else if (file.size > MAX_FILE_SIZE) {
+            quality = 0.4;
+          }
+          
+          const canvas = document.createElement('canvas');
+          // Limit dimensions more aggressively for large images
+          const MAX_WIDTH = 1280;
+          const MAX_HEIGHT = 960;
+          
+          // Calculate new dimensions while maintaining aspect ratio
+          let width = img.width;
+          let height = img.height;
+          
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height = Math.round((height * MAX_WIDTH) / width);
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width = Math.round((width * MAX_HEIGHT) / height);
+              height = MAX_HEIGHT;
+            }
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          
+          // Try multiple compression passes if needed
+          const compressWithQuality = (attemptQuality: number) => {
+            canvas.toBlob((blob) => {
+              if (!blob) {
+                setIsCompressing(false);
+                return reject(new Error('Failed to compress image'));
+              }
+              
+              // Create new file from blob
+              const compressedFile = new File([blob], file.name, {
+                type: 'image/jpeg', // Force JPEG for better compression
+                lastModified: Date.now()
+              });
+              
+              console.log(`Compressed image from ${(file.size / 1024 / 1024).toFixed(2)}MB to ${(compressedFile.size / 1024 / 1024).toFixed(2)}MB`);
+              
+              // If still too large and quality can be reduced further, try again
+              if (compressedFile.size > TARGET_FILE_SIZE && attemptQuality > 0.2) {
+                compressWithQuality(attemptQuality - 0.1);
+              } else {
+                setIsCompressing(false);
+                resolve(compressedFile);
+              }
+            }, 'image/jpeg', attemptQuality); // Always use JPEG for better compression
+          };
+          
+          compressWithQuality(quality);
+        };
+        
+        img.onerror = () => {
+          setIsCompressing(false);
+          reject(new Error('Failed to load image'));
+        };
+      };
+      
+      reader.onerror = () => {
+        setIsCompressing(false);
+        reject(new Error('Failed to read file'));
+      };
+    });
+  }, []);
+  
+  // New function to identify the species
+  const identifySpecies = async (imageDataUrl: string) => {
+    setIsIdentifying(true);
+    setError(null);
+    
+    try {
+      // Call the test-vision API with enhanced mode enabled
+      const response = await fetch(`/api/test-vision?imageUrl=${encodeURIComponent(imageDataUrl)}&enhancedMode=true`);
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to identify species');
+      }
+      
+      const data = await response.json();
+      setIdentificationResult(data.result);
+      
+      // If we have suggestions, update the form fields
+      if (data.result.suggestions && data.result.suggestions.length > 0) {
+        const topSuggestion = data.result.suggestions[0];
+        
+        // Only auto-fill if confidence is above threshold (70%)
+        if (topSuggestion.confidence > 0.7) {
+          // Update form data with the identified species
+          setFormData(prev => ({
+            ...prev,
+            // Only update if fields are empty or if confidence is very high (90%)
+            species_name: prev.species_name || (topSuggestion.scientific_name || ''),
+            common_name: prev.common_name || topSuggestion.name
+          }));
+          
+          setError(`Identified as ${topSuggestion.name} (${Math.round(topSuggestion.confidence * 100)}% confident)`);
+        } else {
+          // If confidence is low, show suggestions but don't auto-fill
+          setError(`Possible species: ${topSuggestion.name} (${Math.round(topSuggestion.confidence * 100)}% confidence) - click to use`);
+        }
+      }
+    } catch (err) {
+      console.error('Error identifying species:', err);
+      setError('Could not identify species from image');
+    } finally {
+      setIsIdentifying(false);
+    }
+  };
+  
+  // Apply a suggestion to the form
+  const applySuggestion = (suggestion: any) => {
+    setFormData(prev => ({
+      ...prev,
+      species_name: suggestion.scientific_name || prev.species_name,
+      common_name: suggestion.name || prev.common_name
+    }));
+    
+    setError(`Applied: ${suggestion.name} (${Math.round(suggestion.confidence * 100)}% confidence)`);
+  };
+  
+  const handleImageChange = async (e: ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     
     const file = e.target.files[0];
@@ -33,9 +196,37 @@ export default function SubmitObservation() {
       return;
     }
     
-    setImage(file);
-    setImagePreview(URL.createObjectURL(file));
-    setError(null);
+    // Check file size
+    if (file.size > MAX_FILE_SIZE) {
+      setError(`Image is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Compressing...`);
+    }
+    
+    try {
+      // Always compress the image for consistency
+      setError('Processing image... please wait.');
+      const processedFile = await compressImage(file);
+      setImage(processedFile);
+      const dataUrl = URL.createObjectURL(processedFile);
+      setImagePreview(dataUrl);
+      setError(null);
+      
+      // Show confirmation of file size
+      if (processedFile.size > TARGET_FILE_SIZE) {
+        setError(`Image processed, but still large (${(processedFile.size / 1024 / 1024).toFixed(2)}MB). Submission may take longer.`);
+      }
+      
+      // Process the image for species identification
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        // Start species identification with the data URL
+        identifySpecies(reader.result as string);
+      };
+      reader.readAsDataURL(processedFile);
+      
+    } catch (err) {
+      console.error('Error processing image:', err);
+      setError('Failed to process image. Please try a different file.');
+    }
   };
   
   const handleSubmit = async (e: FormEvent) => {
@@ -46,30 +237,86 @@ export default function SubmitObservation() {
       return;
     }
     
+    if (isCompressing) {
+      setError('Please wait for image compression to complete');
+      return;
+    }
+    
+    if (isIdentifying) {
+      setError('Please wait for species identification to complete');
+      return;
+    }
+    
     setIsSubmitting(true);
     setError(null);
+    setUploadProgress(0);
+    
+    // Simple timeout to prevent getting stuck
+    const timeoutId = setTimeout(() => {
+      setIsSubmitting(false);
+      setError('Request timed out. There might be a server issue. Please try again later.');
+    }, 30000);
     
     try {
       const formPayload = new FormData();
       
+      // Validate required fields
+      if (!formData.species_name.trim()) {
+        throw new Error('Species name is required');
+      }
+      if (!formData.location.trim()) {
+        throw new Error('Location is required');
+      }
+      
+      // Add form data to payload
       Object.entries(formData).forEach(([key, value]) => {
-        formPayload.append(key, value);
+        formPayload.append(key, value.trim());
       });
       
+      // Add image to payload - log image details to debug
+      console.log(`Uploading image: ${image.name}, size: ${image.size} bytes, type: ${image.type}`);
       formPayload.append('image', image);
       
+      // Use simple fetch for reliability - avoiding complex XHR
       const response = await fetch('/api/submit-observation', {
         method: 'POST',
+        // Don't set Content-Type; browser will set it with boundary for FormData
         body: formPayload
       });
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to submit observation');
+      clearTimeout(timeoutId);
+      
+      // Get response as text first to debug
+      const responseText = await response.text();
+      console.log('Response text:', responseText);
+      
+      // Try to parse as JSON
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        console.error('Failed to parse response as JSON:', e);
+        throw new Error('Server returned invalid response. Please try again later.');
       }
       
-      const data = await response.json();
+      // Check if the response was not ok
+      if (!response.ok) {
+        throw new Error(data.error || data.details || 'Failed to submit observation');
+      }
+      
+      // If we got here, the submission was successful
       setSubmitSuccess(true);
+      
+      // Clear form data
+      setFormData({
+        species_name: '',
+        common_name: '',
+        date_observed: new Date().toISOString().split('T')[0],
+        location: '',
+        notes: ''
+      });
+      setImage(null);
+      setImagePreview(null);
       
       // Redirect after a brief success message
       setTimeout(() => {
@@ -77,8 +324,11 @@ export default function SubmitObservation() {
       }, 1500);
       
     } catch (err) {
+      clearTimeout(timeoutId);
       console.error('Error submitting observation:', err);
-      setError((err instanceof Error) ? err.message : 'Failed to submit observation. Please try again.');
+      
+      const errorMessage = err instanceof Error ? err.message : 'Failed to submit observation. Please try again.';
+      setError(`${errorMessage} (The image is ${image?.size || 0} bytes)`);
       setSubmitSuccess(false);
     } finally {
       setIsSubmitting(false);
@@ -120,6 +370,68 @@ export default function SubmitObservation() {
             </div>
           )}
           
+          {isCompressing && (
+            <div className="mb-6 p-4 bg-blue-500/20 border border-blue-500 rounded-md text-blue-200 animate-fadeIn">
+              <div className="flex items-center">
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-200" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Compressing image... Please wait.
+              </div>
+            </div>
+          )}
+          
+          {isIdentifying && (
+            <div className="mb-6 p-4 bg-blue-500/20 border border-blue-500 rounded-md text-blue-200 animate-fadeIn">
+              <div className="flex items-center">
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-200" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Identifying species... Please wait.
+              </div>
+            </div>
+          )}
+          
+          {identificationResult && identificationResult.suggestions && identificationResult.suggestions.length > 0 && (
+            <div className="mb-6 p-4 bg-green-500/20 border border-green-500 rounded-md text-green-200 animate-fadeIn">
+              <h3 className="font-semibold mb-2">Species Suggestions:</h3>
+              <div className="space-y-2">
+                {identificationResult.suggestions.slice(0, 3).map((suggestion: any, index: number) => (
+                  <div 
+                    key={index} 
+                    className="flex justify-between items-center p-2 bg-green-500/10 rounded cursor-pointer hover:bg-green-500/30 transition-colors"
+                    onClick={() => applySuggestion(suggestion)}
+                  >
+                    <div>
+                      <span className="font-medium">{suggestion.name}</span>
+                      {suggestion.scientific_name && (
+                        <span className="text-sm italic ml-2">({suggestion.scientific_name})</span>
+                      )}
+                    </div>
+                    <span className="text-xs bg-green-800 px-2 py-1 rounded-full">
+                      {Math.round(suggestion.confidence * 100)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs mt-2 text-green-300">Click any suggestion to use it</p>
+            </div>
+          )}
+          
+          {uploadProgress > 0 && !submitSuccess && (
+            <div className="mb-6">
+              <div className="w-full bg-gray-700 rounded-full h-4 mb-2">
+                <div 
+                  className="bg-[#1DE954] h-4 rounded-full transition-all duration-300" 
+                  style={{ width: `${uploadProgress}%` }}
+                ></div>
+              </div>
+              <p className="text-sm text-gray-300 text-center">Uploading: {uploadProgress}%</p>
+            </div>
+          )}
+          
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-4">
               <div className="transition-all duration-300 hover:translate-x-1 focus-within:translate-x-1">
@@ -135,7 +447,7 @@ export default function SubmitObservation() {
                   value={formData.species_name}
                   onChange={handleChange}
                   required
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCompressing || isIdentifying}
                 />
               </div>
               
@@ -152,7 +464,7 @@ export default function SubmitObservation() {
                   value={formData.common_name}
                   onChange={handleChange}
                   required
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCompressing || isIdentifying}
                 />
               </div>
               
@@ -168,7 +480,7 @@ export default function SubmitObservation() {
                   value={formData.date_observed}
                   onChange={handleChange}
                   required
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCompressing || isIdentifying}
                 />
               </div>
               
@@ -185,7 +497,7 @@ export default function SubmitObservation() {
                   value={formData.location}
                   onChange={handleChange}
                   required
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCompressing || isIdentifying}
                 />
               </div>
             </div>
@@ -204,7 +516,7 @@ export default function SubmitObservation() {
                     className="hidden"
                     onChange={handleImageChange}
                     required
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || isCompressing || isIdentifying}
                   />
                   <label htmlFor="image" className="cursor-pointer w-full h-full flex flex-col items-center justify-center">
                     {imagePreview ? (
@@ -220,9 +532,10 @@ export default function SubmitObservation() {
                             e.preventDefault();
                             setImagePreview(null);
                             setImage(null);
+                            setIdentificationResult(null);
                           }}
                           className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 transition-colors"
-                          disabled={isSubmitting}
+                          disabled={isSubmitting || isCompressing || isIdentifying}
                         >
                           ✕
                         </button>
@@ -233,7 +546,8 @@ export default function SubmitObservation() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                         </svg>
                         <p className="text-gray-400 text-sm">Click to upload an image</p>
-                        <p className="text-gray-500 text-xs mt-1">JPG, PNG, GIF up to 10MB</p>
+                        <p className="text-gray-500 text-xs mt-1">JPG, PNG, GIF up to 3MB (smaller is better)</p>
+                        <p className="text-green-500 text-xs mt-1">Species will be identified automatically!</p>
                       </>
                     )}
                   </label>
@@ -252,39 +566,43 @@ export default function SubmitObservation() {
                   placeholder="Add any additional details about your observation..."
                   value={formData.notes}
                   onChange={handleChange}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCompressing || isIdentifying}
                 ></textarea>
               </div>
             </div>
           </div>
           
-          <div className="mt-8">
-            <button
-              type="submit"
-              disabled={isSubmitting || submitSuccess}
-              className={`w-full py-3 px-4 rounded font-bold transition-all duration-300 flex items-center justify-center
-                ${isSubmitting || submitSuccess ? 'bg-gray-500 cursor-not-allowed' : 'bg-[#1DE954] text-black hover:bg-[#19C048] hover:scale-[1.02] hover:shadow-lg'}`}
-            >
-              {isSubmitting ? (
-                <>
-                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-black" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Submitting...
-                </>
-              ) : submitSuccess ? (
-                <>
-                  <svg className="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
-                  </svg>
-                  Submitted!
-                </>
-              ) : (
-                'Submit Observation'
-              )}
-            </button>
-          </div>
+          <button
+            type="submit"
+            className="w-full mt-6 bg-[#1DE954] text-black font-semibold py-3 px-6 rounded hover:bg-[#1DE954]/90 focus:outline-none focus:ring-2 focus:ring-[#1DE954] focus:ring-offset-2 focus:ring-offset-[#282828] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
+            disabled={isSubmitting || isCompressing || isIdentifying}
+          >
+            {isSubmitting ? (
+              <div className="flex items-center justify-center">
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-black" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                {uploadProgress > 0 ? `Uploading... ${uploadProgress}%` : 'Submitting...'}
+              </div>
+            ) : isCompressing ? (
+              <div className="flex items-center justify-center">
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-black" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Compressing Image...
+              </div>
+            ) : isIdentifying ? (
+              <div className="flex items-center justify-center">
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-black" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Identifying Species...
+              </div>
+            ) : 'Submit Observation'}
+          </button>
         </form>
       </div>
     </main>

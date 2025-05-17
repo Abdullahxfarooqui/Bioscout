@@ -15,9 +15,8 @@ function extractKeywords(question: string): string[] {
 async function retrieveContext(question: string): Promise<string> {
   const keywords = extractKeywords(question);
   
-  if (keywords.length === 0) {
-    return getDefaultContext();
-  }
+  // Removed immediate return of default context if keywords.length === 0
+  // Let's try to process even if keyword extraction is minimal.
   
   try {
     // Get relevant knowledge base snippets
@@ -71,14 +70,17 @@ async function retrieveContext(question: string): Promise<string> {
     const allContext = [...knowledgeBaseSnippets, ...observationNotes];
     
     if (allContext.length === 0) {
-      return getDefaultContext();
+      // Return an empty string or a message indicating no specific context was found
+      // instead of the generic default context.
+      return "No specific information found in the knowledge base for your query."; 
     }
     
     return allContext.join('\n\n');
     
   } catch (error) {
     console.error('Error retrieving context:', error);
-    return getDefaultContext();
+    // Return an error message or an empty string instead of default context
+    return "An error occurred while retrieving context. Please try again.";
   }
 }
 
@@ -106,10 +108,15 @@ export async function generateAnswer(question: string): Promise<string> {
       'https://api-inference.huggingface.co/models/google/flan-t5-xl',
       {
         inputs: `
-Context information about biodiversity in Islamabad:
+Context information specifically about the wildlife of Margalla Hills National Park. This includes its native mammals, birds, reptiles, insects, and plant biodiversity. Focus on ecological significance, conservation status, and species-specific data related to Margalla Hills National Park.
 ${context}
 
 Question: ${question}
+
+Strictly adhere to the following: 
+1. If the question is about the wildlife of Margalla Hills National Park (including its flora, fauna, ecological significance, conservation status, or species-specific data) AND the provided context contains relevant information, provide a detailed and accurate answer based ONLY on the context.
+2. If the question is about Margalla Hills National Park but the context does NOT provide relevant information to answer it, respond with: "The provided information does not contain specific details to answer your question about Margalla Hills National Park's wildlife. I can only provide information based on the available knowledge."
+3. If the question is NOT about the wildlife of Margalla Hills National Park, respond with: "I can only provide information about the wildlife of Margalla Hills National Park (mammals, birds, reptiles, insects, and plant biodiversity)."
 
 Answer:
 `
@@ -131,7 +138,7 @@ Answer:
       return response.data.generated_text;
     }
     
-    return "I don't have enough information to answer that question about Islamabad's biodiversity.";
+    return "I can only provide information about the wildlife of Margalla Hills National Park.";
     
   } catch (error) {
     console.error('Error generating answer:', error);

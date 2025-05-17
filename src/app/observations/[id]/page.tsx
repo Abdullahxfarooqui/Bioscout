@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Header from '@/components/Header';
 import { Observation } from '@/types';
 import { db } from '@/lib/firebase';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue, get } from 'firebase/database';
 import { getImageFromDatabase } from '@/lib/database-helpers';
 
 export default function ObservationDetail() {
@@ -32,15 +32,23 @@ export default function ObservationDetail() {
           const observationData = snapshot.val() as Observation;
           setObservation(observationData);
           
-          // Load the image if it's a database reference
-          if (observationData.image_url?.startsWith('db-image:')) {
-            const imageId = observationData.image_url.split(':')[1];
-            const imageData = await getImageFromDatabase(imageId);
-            if (imageData) {
-              setImageUrl(imageData);
-            }
+          // Handle both regular URLs and database-stored images
+          const imageUrlValue = observationData.image_url;
+          
+          // Check if it's a database-stored image
+          if (imageUrlValue && imageUrlValue.startsWith('db://')) {
+            console.log('Loading image from database storage...');
+            getImageFromDatabase(imageUrlValue)
+              .then(dataUrl => {
+                setImageUrl(dataUrl);
+              })
+              .catch(err => {
+                console.error('Failed to load database image:', err);
+                setError('Failed to load image. Please try again later.');
+              });
           } else {
-            setImageUrl(observationData.image_url);
+            // Regular Firebase Storage URL
+            setImageUrl(imageUrlValue);
           }
           
           setError(null);
@@ -185,17 +193,24 @@ export default function ObservationDetail() {
                   
                   <ul className="space-y-2">
                     {observation.ai_identification.suggestions.map((suggestion, index) => (
-                      <li key={index} className="flex items-center justify-between p-3 bg-[#222] rounded-md hover:bg-[#333] transition-colors">
-                        <span className="text-gray-300">{suggestion.name}</span>
-                        <div className="w-24 bg-gray-700 rounded-full h-2.5">
-                          <div 
-                            className="bg-[#1DE954] h-2.5 rounded-full transition-all duration-1000"
-                            style={{ width: `${Math.round((suggestion.confidence || 0) * 100)}%` }}
-                          ></div>
+                      <li key={index} className="flex flex-col p-3 bg-[#222] rounded-md hover:bg-[#333] transition-colors">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-300">{suggestion.name}</span>
+                          <div className="w-24 bg-gray-700 rounded-full h-2.5">
+                            <div 
+                              className="bg-[#1DE954] h-2.5 rounded-full transition-all duration-1000"
+                              style={{ width: `${Math.round((suggestion.confidence || 0) * 100)}%` }}
+                            ></div>
+                          </div>
+                          <span className="text-sm text-gray-400 ml-2">
+                            {Math.round((suggestion.confidence || 0) * 100)}%
+                          </span>
                         </div>
-                        <span className="text-sm text-gray-400 ml-2">
-                          {Math.round((suggestion.confidence || 0) * 100)}%
-                        </span>
+                        {suggestion.scientific_name && (
+                          <span className="text-sm italic text-gray-400 mt-1">
+                            {suggestion.scientific_name}
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ul>
