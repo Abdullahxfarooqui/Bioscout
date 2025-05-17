@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { db } from './firebase';
+import { firestore } from './firebase'; // Changed db to firestore
 import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 
 // Extract keywords from a question for search
@@ -22,7 +22,7 @@ async function retrieveContext(question: string): Promise<string> {
   try {
     // Get relevant knowledge base snippets
     const knowledgeBaseSnippets: string[] = [];
-    const knowledgeBaseRef = collection(db, 'knowledge_base');
+    const knowledgeBaseRef = collection(firestore, 'knowledge_base'); // Changed db to firestore
     
     for (const keyword of keywords) {
       const q = query(knowledgeBaseRef, where('tags', 'array-contains', keyword));
@@ -35,7 +35,7 @@ async function retrieveContext(question: string): Promise<string> {
     
     // Get relevant observation notes
     const observationNotes: string[] = [];
-    const observationsRef = collection(db, 'observations');
+    const observationsRef = collection(firestore, 'observations'); // Changed db to firestore
     
     // First try direct keyword matches
     for (const keyword of keywords) {

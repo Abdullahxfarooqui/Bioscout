@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { identifySpecies } from '@/lib/vision-api';
 import { storeImageInDatabase, storeObservation } from '@/lib/database-helpers';
+import { Observation } from '@/types';
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
       const image_url = await storeImageInDatabase(imageBuffer);
       
       // Get AI identification (optional - will continue if this fails)
-      let ai_identification = { suggestions: [] };
+      let ai_identification: Observation['ai_identification'] = { suggestions: [] };
       try {
         // Since we're using a database reference, we'll skip AI identification for now
         ai_identification = { 

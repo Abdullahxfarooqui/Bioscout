@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
+
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc } from 'firebase/firestore';
 import fs from 'fs';

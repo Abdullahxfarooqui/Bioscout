@@ -17,11 +17,15 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Always use Realtime Database to avoid storage issues
+// Initialize Realtime Database
 const db = getDatabase(app);
+
+// Initialize Firestore
+const firestore = getFirestore(app);
+
 const storage = getStorage(app);
 
-// Set this to true to indicate we're using Realtime DB
-const useRealtimeDb = true;
+// Set this to true to indicate we're using Realtime DB (can be removed if not strictly needed elsewhere or if Firestore becomes primary)
+const useRealtimeDb = true; 
 
-export { db, storage, useRealtimeDb };
+export { db, firestore, storage, useRealtimeDb };

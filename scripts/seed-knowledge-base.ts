@@ -3,7 +3,8 @@ import { getFirestore, collection, addDoc } from 'firebase/firestore';
 import * as dotenv from 'dotenv';
 
 // Load environment variables from .env.local
-dotenv.config({ path: '.env.local' });
+import path from 'path';
+dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,

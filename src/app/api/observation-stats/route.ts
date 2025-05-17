@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
+import { firestore } from '@/lib/firebase'; // Changed db to firestore
 import { collection, getDocs, query, where } from 'firebase/firestore';
 
 export async function GET() {
   try {
-    const observationsRef = collection(db, 'observations');
+    const observationsRef = collection(firestore, 'observations'); // Changed db to firestore
     const allObservationsSnapshot = await getDocs(observationsRef);
     
     // Count observations by species category
